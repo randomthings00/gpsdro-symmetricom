@@ -14,13 +14,13 @@ I’ve tested this against a Datum StarLoc2, using a surveyed completed uBlox LE
 
 All the GPS modules were set to use all constellations they were capable of receiving. My favourite is the Trimble, with the LEA-8T coming in a close second place, and the TAU1202 in third and the ATGM336H last, but for what they are, all are good options.
 
-This was tested with a Symmetricom X99, SA.22c, a BPI-PicoW-S3, and Raspberry Pi Pico.
+This was tested with a Symmetricom X99, SA.22c, a BPI-PicoW-S3, Raspberry Pi Pico, and ESP32-C3 OLED.
 ### Holdover Behaviour
 I have not tested the holdover portion of the code but that has not been the focus and it only has been added in recently.
 
 ## Setup
 ### GPS 
-The GPS module must be powered, but no data needs to be sent to the Pico/ESP32-S3.  The PPS signal should be wired up to the PPS input and the coaxial cable should be properly grounded, this reduced random signal spikes.
+The GPS module must be powered, but no data needs to be sent to the Pico/ESP32-S3/ESP32-C3.  The PPS signal should be wired up to the PPS input and the coaxial cable should be properly grounded, this reduced random signal spikes.
 
 ### Symmetricom
 I did not cover the breakout for the Symmetricom but there are various breakout boards and schematics out there.  I made my own at the start but ended up using the boards for the SA.22c and X72 designed and created by BG7TBL and sold by various vendors on Ebay.
@@ -64,7 +64,7 @@ This should be used with caution, it's not well documented and I discovered it v
 
 <table><td><tr> 
 <pre>
-run mode> r5987717 {enter}
+run mode> x5987717 {enter}
 admin mode> f
 factory mode> y
 hard reset confirm prompt> y {enter}
