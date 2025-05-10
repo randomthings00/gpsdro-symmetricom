@@ -112,7 +112,7 @@ DDS_CHECK_INTERVAL	= 10
 #DDS_DRIFT_WINDOW   = 10
 # Weighted against 6 sawtooth pattern
 # Still testing this -- allows for better tracking
-# and keeps it to about +/- 5ns
+# and keeps it to about +/- 5ns..
 DDS_DRIFT_LIMIT	    = 0.75
 DDS_DRIFT_WINDOW    = 60
 
@@ -187,7 +187,13 @@ def platform_setup():
     # by all.
     #
     # Pico: UART 0, TX=0, RX=1
-    # ESP32-S3: UART 1, TX=43, RX=44
+    # ESP32-S3 - Pins 43 and 44 are dedicated console out, in standalone 
+    #     mode it doesn't work! Usingf UART1 locations for Pico
+    #     but mapped to the BPI-Pico-S3
+    # ESP-C3 - Pins 21 and 20 are teh dedicated console out
+    # 
+    # ESP32-S3: UART 1, TX=18, RX=16
+    # ESP32-C3: UART 1, TX=6, RX=5
     #
     if (SYSTEM_DATA .nodename == "rp2" ):
         if (OVERCLOCK_SYS):
@@ -200,13 +206,13 @@ def platform_setup():
             print ("Overclocking to", 240000000);
             machine.freq(240000000);
         print ("Setting up UART for ESP32-S3..");
-        rubidium = machine.UART(1, tx=machine.Pin(43), rx=machine.Pin(44), rxbuf=1024, timeout=200, timeout_char=10);
+        rubidium = machine.UART(1, tx=machine.Pin(18), rx=machine.Pin(16), rxbuf=1024, timeout=200, timeout_char=10);
     elif ( SYSTEM_DATA.machine.find("ESP32C3") >= 0 ):
         if (OVERCLOCK_SYS):
             print ("Overclocking to", 160000000);
             machine.freq(160000000);
         print ("Setting up UART for ESP32-C3..");
-        rubidium = machine.UART(1, tx=machine.Pin(21), rx=machine.Pin(20), rxbuf=1024, timeout=200, timeout_char=10);
+        rubidium = machine.UART(1, tx=machine.Pin(6), rx=machine.Pin(5), rxbuf=1024, timeout=200, timeout_char=10);
     else:
         print ("********** Platform not found aborting ************")
         exit(1);
@@ -832,7 +838,12 @@ def main():
     else:
         print ("Rubidium lock is good.");
 
-
+    # Used to reset the tic counter
+    # Reports this maybe an issue on larger value drifts.
+    set_tic_message( "5FFFFFF90" );
+#    set_tic_message( "90" );
+    get_pps_delta();
+    
     # Initial disciplining
     while ( calculate_slope(STATE_INITIAL, ddsAdjValue, DISCIPLINE_ENTRIES) ):
 #    while ( calculate_slope(STATE_INITIAL, ddsAdjValue, 0) ):
@@ -886,6 +897,10 @@ def main():
             elif ( holdOverState == HLD_STATE_START ):
                 if ( symStatusArray["IFPGACTL"] & 0x0002 ):
                     holdOverState = HLD_STATE_RB_LOCK;
+                elif ( abs(symStatusArray["DIFF1PPSDELTA"]) >= PPS_TRIGGER ):
+                    holdOverState = HLD_STATE_OFF;
+                    reset_pps_cal_entry(STATE_CALCSLOPE);
+                    reset_hold_details ( STATE_HOLD_START );
                 
                 track_pps_average(0);
                 continue;
@@ -902,7 +917,7 @@ def main():
                         symPPS[symPos] = 0;
                         symPos = ( symPos + 1 ) % PPS_AVG_TRK;
                         
-                    holdOverState = 0;
+                    holdOverState = HLD_STATE_OFF;
                     holdOverTime = 0;
                 continue;
 
