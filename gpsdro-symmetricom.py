@@ -31,6 +31,7 @@ import os
 SYSTEM_DATA         = os.uname()
 STORAGE_DATA        = os.statvfs("/")
 OVERCLOCK_SYS       = 0
+STATUS_LED			= 0
 
 #
 # Constants
@@ -168,7 +169,7 @@ ddsAdjValueOld 			= float(0.0);
 # running because it exits if it is not found!
 #
 def platform_setup():
-    global rubidium
+    global rubidium, STATUS_LED
     
     osData = os.uname();
     storageSize = STORAGE_DATA[1] * STORAGE_DATA[2];
@@ -201,18 +202,21 @@ def platform_setup():
             machine.freq(150000000);
         print ("Setting up UART for Raspberry Pi Pico..");
         rubidium = machine.UART(0, tx=machine.Pin(0), rx=machine.Pin(1), rxbuf=1024, timeout=200, timeout_char=10);
+        STATUS_LED = machine.Pin(25, machine.Pin.OUT);
     elif ( SYSTEM_DATA.machine.find("ESP32S3") > 0 ):
         if (OVERCLOCK_SYS):
             print ("Overclocking to", 240000000);
             machine.freq(240000000);
         print ("Setting up UART for ESP32-S3..");
         rubidium = machine.UART(1, tx=machine.Pin(18), rx=machine.Pin(16), rxbuf=1024, timeout=200, timeout_char=10);
+        STATUS_LED = machine.Pin(46, machine.Pin.OUT);
     elif ( SYSTEM_DATA.machine.find("ESP32C3") >= 0 ):
         if (OVERCLOCK_SYS):
             print ("Overclocking to", 160000000);
             machine.freq(160000000);
         print ("Setting up UART for ESP32-C3..");
-        rubidium = machine.UART(1, tx=machine.Pin(6), rx=machine.Pin(5), rxbuf=1024, timeout=200, timeout_char=10);
+        rubidium = machine.UART(1, tx=machine.Pin(0), rx=machine.Pin(1), rxbuf=1024, timeout=200, timeout_char=10);
+        STATUS_LED = machine.Pin(8, machine.Pin.OUT);
     else:
         print ("********** Platform not found aborting ************")
         exit(1);
@@ -611,7 +615,8 @@ def return_sum_array( theArray, posNow, posInterval, numEntries ):
 ### 
 def calculate_slope( whichArray, inDdsValue, disciplineDuration ):
     global ddsAdjValue, DDS_CAL_VALUE, DDS_BASE_VALUE, DDS_LOW_VALUE, DDS_INCR_VALUE
-    global symSumsArray
+    global symSumsArray, STATUS_LED
+
 
 
     get_pps_delta();
@@ -642,6 +647,7 @@ def calculate_slope( whichArray, inDdsValue, disciplineDuration ):
         print (".", end="");
         get_pps_delta();
         time.sleep(1);
+        STATUS_LED.toggle();
         retryTracker += 1;
         if (retryTracker > 10):
             set_tic_message( symStatusArray["1PPSDELTA"] );
@@ -664,6 +670,7 @@ def calculate_slope( whichArray, inDdsValue, disciplineDuration ):
         if ( time.ticks_diff (time.ticks_ms(), startTracker) >= 0):
             get_pps_delta();
             get_control_reg_message();
+            STATUS_LED.toggle();
             pps_cal_list(whichArray, pps_rollover_correction(symStatusArray["1PPSDELTA"]), valueCounter);
             
             if ( symStatusArray["IFPGACTL"] & 0x0002 ):
@@ -730,7 +737,8 @@ def calculate_slope( whichArray, inDdsValue, disciplineDuration ):
         while ( symStatusArray["1PPSDELTA"] != 0 ):
             print (".", end="");
             get_pps_delta();
-            time.sleep(1); 
+            time.sleep(1);
+            STATUS_LED.toggle();
             retryTracker += 1;
             if (retryTracker > 10):
                 set_tic_message( symStatusArray["1PPSDELTA"] );
@@ -834,6 +842,7 @@ def main():
             print (".",end=""); 
             get_control_reg_message();
             time.sleep(2);
+            STATUS_LED.toggle();
         print ("");
     else:
         print ("Rubidium lock is good.");
@@ -873,6 +882,7 @@ def main():
         if ( time.ticks_diff (time.ticks_ms(), ppsTracker) > 0):
             ppsTracker = time.ticks_add(time.ticks_ms(), POLL_PPS);
             get_pps_delta();
+            STATUS_LED.toggle();
 
 #
 # This is the rough holdover code I put in for now, there's more than can be
