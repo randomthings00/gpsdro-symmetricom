@@ -19,7 +19,6 @@
 ##    Github: https://github.com/randomthings00/gpsdro-symmetricom
 ##    EEVBlog Forum: https://www.eevblog.com/forum/metrology/symmetricom-x99-rubidium-oscillator/
 ##
-import machine
 import time
 import struct
 import gc
@@ -32,6 +31,11 @@ SYSTEM_DATA         = os.uname()
 STORAGE_DATA        = os.statvfs("/")
 OVERCLOCK_SYS       = 0
 STATUS_LED			= 0
+
+if ( SYSTEM_DATA.sysname.find("Linux") >= 0 ):
+    import serial
+else:
+    import machine
 
 #
 # Constants
@@ -143,8 +147,8 @@ bufferArray				= {};
 #
 # Trackers
 #
-POLL_HEALTH_OFFSET	= 500
-POLL_DDS_OFFSET		= 250
+POLL_HEALTH_OFFSET	= POLL_PPS/2
+POLL_DDS_OFFSET		= POLL_PPS/4
 PPS_AVG_TRK			= 10 * DDS_DRIFT_WINDOW
 
 symPPS 					= [ int(0) ] * PPS_AVG_TRK;
@@ -156,7 +160,7 @@ symPPScounter 			= 0;
 # so if it's a 1.234e-10, it's actually, 12.34 starting value
 #
 ddsAdjValue 			= float(0.0);
-#ddsAdjValue 			= float(-40.2);
+#ddsAdjValue 			= float(-74.2);
 ddsAdjValueOld 			= float(0.0);
 
 # Utility Functions
@@ -169,7 +173,7 @@ ddsAdjValueOld 			= float(0.0);
 # running because it exits if it is not found!
 #
 def platform_setup():
-    global rubidium, STATUS_LED
+    global rubidium, STATUS_LED, POLL_PPS
     
     osData = os.uname();
     storageSize = STORAGE_DATA[1] * STORAGE_DATA[2];
@@ -179,7 +183,6 @@ def platform_setup():
     MB = 1024 * 1024
 
     print (osData);
-    print ("Speed:", machine.freq());
     print("Size : {:,} bytes, {:,} KB, {} MB".format(storageSize, storageSize / KB, storageSize / MB))
     print("Used : {:,} bytes, {:,} KB, {} MB".format(storageUsed, storageUsed / KB, storageUsed / MB))
     print("Free : {:,} bytes, {:,} KB, {} MB".format(storageFree, storageFree / KB, storageFree / MB))
@@ -197,6 +200,7 @@ def platform_setup():
     # ESP32-C3: UART 1, TX=6, RX=5
     #
     if (SYSTEM_DATA .nodename == "rp2" ):
+        print ("Speed:", machine.freq());
         if (OVERCLOCK_SYS):
             print ("Overclocking to", 150000000);
             machine.freq(150000000);
@@ -204,6 +208,7 @@ def platform_setup():
         rubidium = machine.UART(0, tx=machine.Pin(0), rx=machine.Pin(1), rxbuf=1024, timeout=200, timeout_char=10);
         STATUS_LED = machine.Pin(25, machine.Pin.OUT);
     elif ( SYSTEM_DATA.machine.find("ESP32S3") > 0 ):
+        print ("Speed:", machine.freq());
         if (OVERCLOCK_SYS):
             print ("Overclocking to", 240000000);
             machine.freq(240000000);
@@ -211,12 +216,17 @@ def platform_setup():
         rubidium = machine.UART(1, tx=machine.Pin(18), rx=machine.Pin(16), rxbuf=1024, timeout=200, timeout_char=10);
         STATUS_LED = machine.Pin(46, machine.Pin.OUT);
     elif ( SYSTEM_DATA.machine.find("ESP32C3") >= 0 ):
+        print ("Speed:", machine.freq());
         if (OVERCLOCK_SYS):
             print ("Overclocking to", 160000000);
             machine.freq(160000000);
         print ("Setting up UART for ESP32-C3..");
         rubidium = machine.UART(1, tx=machine.Pin(0), rx=machine.Pin(1), rxbuf=1024, timeout=200, timeout_char=10);
         STATUS_LED = machine.Pin(8, machine.Pin.OUT);
+    elif ( SYSTEM_DATA.sysname.find("Linux") >= 0 ):
+        print ("Setting up UART for Linux..");
+        rubidium = serial.Serial("/dev/ttyS4", timeout=0.2, inter_byte_timeout=0.001);        
+        POLL_PPS = 1000000000
     else:
         print ("********** Platform not found aborting ************")
         exit(1);
@@ -245,6 +255,36 @@ def buffer_hex_float_output(hexString):
 
 
 #
+#  This handles the abstraction of micropython time and regualr python time
+#
+def get_current_tick():
+    if ( SYSTEM_DATA.sysname.find("Linux") >= 0 ):
+        return time.monotonic_ns();
+    else:
+        return time.ticks_ms();
+
+
+#
+#  This handles the difference addition
+#
+def add_offset_to_current( offsetTick ):
+    if ( SYSTEM_DATA.sysname.find("Linux") >= 0 ):
+        return time.monotonic_ns() + offsetTick;
+    else:
+        return time.ticks_add(time.ticks_ms(), int(offsetTick));
+
+
+#
+#  This returns the difference
+#
+def diff_offset_to_current( offsetTick ):
+    if ( SYSTEM_DATA.sysname.find("Linux") >= 0 ):
+        return time.monotonic_ns() - offsetTick;
+    else:
+        return time.ticks_diff (time.ticks_ms(), int(offsetTick));
+
+
+#
 # Rollover adjustment on PPS based on how the Symmetricom units handle
 # it via their internal crystal
 #
@@ -261,9 +301,12 @@ def pps_rollover_correction( val ):
 #
 def redefine_constants():
     global DDS_CAL_VALUE, DDS_BASE_VALUE, DDS_LOW_VALUE, DDS_INCR_VALUE
+    global POLL_HEALTH_OFFSET, POLL_DDS_OFFSET
 
     DDS_CAL_VALUE = 1 / int(symModelArray["CRYSTAL"]);
     DDS_INCR_VALUE = DDS_LOW_VALUE / DDS_BASE_VALUE;
+    POLL_HEALTH_OFFSET	= POLL_PPS / 2;
+    POLL_DDS_OFFSET		= POLL_PPS / 4;
 
 
 #
@@ -274,15 +317,20 @@ def redefine_constants():
 #       so buffers are reallocated constantly in the functions.
 #
 def get_serial_data( type, bufParam ):
-    global bufferStr
+    global bufferStr, bufferArray
               
     bufferStr = "";
 
-    data = rubidium.read();
-    try:
-        bufferStr += data.decode('ascii').upper();
-    except:
-        bufferStr = "";
+    if ( SYSTEM_DATA.sysname.find("Linux") >= 0 ):
+        bufferStr  = rubidium.readlines();
+        bufferArray = [line.decode('utf-8').strip().upper() for line in bufferStr]
+    else:
+        data = rubidium.read();
+        try:
+            bufferStr += data.decode('ascii').upper();
+        except:
+            bufferStr = "";
+        bufferArray = bufferStr.split("\r\n");
           
 
 #
@@ -292,30 +340,38 @@ def get_serial_data( type, bufParam ):
 def send_serial_data( type, bufParam ):
     global bufferStr
     
-    rubidium.write(bufParam);
+    if ( SYSTEM_DATA.sysname.find("Linux") >= 0 ):
+        rubidium.write(bufParam.encode())
+    else:
+        rubidium.write(bufParam);
 
 
 #
 # Used to get Model details from the "i" command
 #
 def get_symmetricom_model():
-    global symModelArray, bufferStr, bufferArray
+    global symModelArray, bufferStr, bufferArray, rubidium
 
     # This block is used to test for the 2 known
     # baud rates
-    rubidium.init(baudrate=9600, bits=8, parity=None, stop=1);
+    if ( SYSTEM_DATA.sysname.find("Linux") >= 0 ):
+        rubidium = serial.Serial("/dev/ttyS4", timeout=0.2, inter_byte_timeout=0.001, baudrate=9600, bytesize=8, parity=serial.PARITY_NONE, stopbits=1);
+    else:
+        rubidium.init(baudrate=9600, bits=8, parity=None, stop=1);
     send_serial_data(RUBIDIUM, "i");
     get_serial_data(RUBIDIUM, 0);
     
     # Sometimes the try and catch just doesn't work
     # and it needs to be done again..  Happens.. 
     if ( len(bufferStr) < 4 ):
-        rubidium.init(baudrate=57600, bits=8, parity=None, stop=1);
-        rubidium.flush();
+        if ( SYSTEM_DATA.sysname.find("Linux") >= 0 ):
+            rubidium = serial.Serial("/dev/ttyS4", timeout=0.2, inter_byte_timeout=0.001, baudrate=57600, bytesize=8, parity=serial.PARITY_NONE, stopbits=1);
+        else:
+            rubidium.init(baudrate=57600, bits=8, parity=None, stop=1);
+            rubidium.flush();
         send_serial_data(RUBIDIUM, "i");
         get_serial_data(RUBIDIUM, 0);
 
-    bufferArray = bufferStr.split("\r\n");
     for x in bufferArray:
         if ( x.find("BY SYMMETRICOM,") >= 0 ):
             tempVal = x[:x.find("BY SYMMETRICOM,")];
@@ -334,10 +390,11 @@ def get_symmetricom_model():
 
         if ( (x.find("SERIAL CODE IS ") >= 0) and (x.find("-H,") >= 0) ):
             tempVal = x[x.find("SERIAL CODE IS ",)+15:x.find("-H,")];
-            if ( symModelArray["MODELENUM"] == SYM_X99 ):
-                tempVal = tempVal;
-            else:
-                tempVal = struct.unpack('!L', bytes.fromhex(tempVal))[0];
+#            tempVal = tempVal;
+#            if ( symModelArray["MODELENUM"] == SYM_X99 ):
+#                tempVal = tempVal;
+#            else:
+#                tempVal = struct.unpack('!L', bytes.fromhex(tempVal))[0];
             symModelArray["S/N"] = str(tempVal)+"-H";
 
 
@@ -392,7 +449,6 @@ def get_pps_delta( ):
     send_serial_data(RUBIDIUM, 'j');
     
     get_serial_data(RUBIDIUM, 0);
-    bufferArray = bufferStr.split("\r\n");
     tempVal = 0;
     
     for x in bufferArray:
@@ -417,7 +473,6 @@ def get_status_message():
     send_serial_data(RUBIDIUM, 'w');
 
     get_serial_data(RUBIDIUM, 0);
-    bufferArray = bufferStr.split("\r\n");
     tempVal = "";
 
     for x in bufferArray:
@@ -478,7 +533,6 @@ def get_control_reg_message():
        
     send_serial_data(RUBIDIUM, "p");
     get_serial_data(RUBIDIUM, 0);
-    bufferArray = bufferStr.split("\r\n");
 
     tempVal = 0;
     
@@ -647,14 +701,15 @@ def calculate_slope( whichArray, inDdsValue, disciplineDuration ):
         print (".", end="");
         get_pps_delta();
         time.sleep(1);
-        STATUS_LED.toggle();
+        if ( SYSTEM_DATA.sysname.find("Linux") < 0 ):  
+            STATUS_LED.toggle();
         retryTracker += 1;
         if (retryTracker > 10):
             set_tic_message( symStatusArray["1PPSDELTA"] );
             retryTracker = 1;
     print ("");
     
-    startTracker = time.ticks_ms(); 
+    startTracker = get_current_tick(); 
     loopTracker = 1;
     valueTracker = 0;
     valueCounter = int(0);
@@ -663,14 +718,15 @@ def calculate_slope( whichArray, inDdsValue, disciplineDuration ):
     get_pps_delta();
     get_control_reg_message();
     print ("  Start disciplining (", disciplineDuration, ")..");
-    startTracker =  time.ticks_add(time.ticks_ms(), POLL_PPS);
+    startTracker =  add_offset_to_current(POLL_PPS);
 
     while ( (loopTracker) and (valueCounter < disciplineDuration) ):
 
-        if ( time.ticks_diff (time.ticks_ms(), startTracker) >= 0):
+        if ( diff_offset_to_current(startTracker) >= 0):
             get_pps_delta();
             get_control_reg_message();
-            STATUS_LED.toggle();
+            if ( SYSTEM_DATA.sysname.find("Linux") < 0 ):  
+                STATUS_LED.toggle();
             pps_cal_list(whichArray, pps_rollover_correction(symStatusArray["1PPSDELTA"]), valueCounter);
             
             if ( symStatusArray["IFPGACTL"] & 0x0002 ):
@@ -680,7 +736,7 @@ def calculate_slope( whichArray, inDdsValue, disciplineDuration ):
                 print ("    PPS Spike / Loss detected, exiting..");
                 loopTracker = 0;
             else:
-                startTracker = time.ticks_add(startTracker, POLL_PPS);
+                startTracker = add_offset_to_current(POLL_PPS);
                 valueTracker += pps_rollover_correction(symStatusArray["1PPSDELTA"]);
                 valueCounter = valueCounter + 1;
             printedStatus = 0;
@@ -738,7 +794,8 @@ def calculate_slope( whichArray, inDdsValue, disciplineDuration ):
             print (".", end="");
             get_pps_delta();
             time.sleep(1);
-            STATUS_LED.toggle();
+            if ( SYSTEM_DATA.sysname.find("Linux") < 0 ):  
+                STATUS_LED.toggle();
             retryTracker += 1;
             if (retryTracker > 10):
                 set_tic_message( symStatusArray["1PPSDELTA"] );
@@ -842,7 +899,8 @@ def main():
             print (".",end=""); 
             get_control_reg_message();
             time.sleep(2);
-            STATUS_LED.toggle();
+            if ( SYSTEM_DATA.sysname.find("Linux") < 0 ):  
+                STATUS_LED.toggle();
         print ("");
     else:
         print ("Rubidium lock is good.");
@@ -865,11 +923,11 @@ def main():
     print ("Health: ", symStatusArray);
     print ("-------------------------");
     print ("Starting Main Loop");
-    timeTracker = time.ticks_ms();
+    timeTracker = get_current_tick();
     
-    ppsTracker = time.ticks_add(time.ticks_ms(),POLL_PPS);
-    healthTracker = time.ticks_add(time.ticks_ms(),(5*POLL_PPS));
-    ddsTracker = time.ticks_add(time.ticks_ms(),POLL_DDS_OFFSET + (DDS_CHECK_INTERVAL*POLL_PPS));
+    ppsTracker = add_offset_to_current(POLL_PPS);
+    healthTracker = add_offset_to_current((5*POLL_PPS));
+    ddsTracker = add_offset_to_current(POLL_DDS_OFFSET + (DDS_CHECK_INTERVAL*POLL_PPS));
     loopTracker = 1;
     holdOverState = HLD_STATE_OFF;
     holdOverTime = 0;
@@ -879,10 +937,11 @@ def main():
 
         # 1 PPS processing -- it drifts but placing it up here hopefully 
         # will reduce the drift
-        if ( time.ticks_diff (time.ticks_ms(), ppsTracker) > 0):
-            ppsTracker = time.ticks_add(time.ticks_ms(), POLL_PPS);
+        if ( diff_offset_to_current( ppsTracker) > 0):
+            ppsTracker = add_offset_to_current(POLL_PPS);
             get_pps_delta();
-            STATUS_LED.toggle();
+            if ( SYSTEM_DATA.sysname.find("Linux") < 0 ):  
+                STATUS_LED.toggle();
 
 #
 # This is the rough holdover code I put in for now, there's more than can be
@@ -947,17 +1006,17 @@ def main():
         # method, we will see how well this works and may switch over to using 
         # the CALCSLOPE values in the long term
         #                    
-        if ( time.ticks_diff(time.ticks_ms(), ddsTracker) > 0 ):
+        if ( diff_offset_to_current(ddsTracker) > 0 ):
 
 #
 # Don't adjust anything in holdover state
 #
             if ( holdOverState ):
-                ddsTracker = time.ticks_add(time.ticks_ms(), ((DDS_DRIFT_WINDOW*2)*POLL_PPS));
+                ddsTracker = add_offset_to_current((DDS_DRIFT_WINDOW*2)*POLL_PPS);
                 continue;
                 
             if ( dds_check_and_adjust() ):
-                ddsTracker = time.ticks_add(time.ticks_ms(), ((DDS_DRIFT_WINDOW*2)*POLL_PPS));
+                ddsTracker = add_offset_to_current((DDS_DRIFT_WINDOW*2)*POLL_PPS);
 
                 # We will consider any adjustment that exceeds 
                 # DISCIPLINE_ENTRIES period as the last disciplined value. 
@@ -990,13 +1049,13 @@ def main():
 
                 reset_pps_cal_entry(STATE_CALCSLOPE);
             else:
-                ddsTracker = time.ticks_add(time.ticks_ms(),(DDS_CHECK_INTERVAL*POLL_PPS));
+                ddsTracker = add_offset_to_current(DDS_CHECK_INTERVAL*POLL_PPS);
                 
         # Display stuff here lowest priority to everything and the small sleep
         # if nothing to do.
-        elif ( time.ticks_diff (time.ticks_ms(), healthTracker) > 0):
+        elif ( diff_offset_to_current(healthTracker) > 0):
             get_status_message();
-            healthTracker = time.ticks_add(time.ticks_ms(),(10*POLL_PPS));
+            healthTracker = add_offset_to_current(10*POLL_PPS);
             
             rblock = "Good";
             if (symStatusArray["IFPGACTL"] & 0x0002): rblock = "Bad";
@@ -1015,7 +1074,8 @@ def main():
 # R Slope: R(  5.3234e-12)   P.Hours:       123456   P.Ticks: 12345678
 # C Slope: R( -2.2213e-11)   DDS Adjust:     -10.2   Averages: 1.0e-11
 
-            print("-- GC Memory Alloc:", gc.mem_alloc(), "GC Memory Free:", gc.mem_free(), "GC Collected:", gc.collect());
+            if ( SYSTEM_DATA.sysname.find("Linux") < 0 ):
+                print("-- GC Memory Alloc:", gc.mem_alloc(), "GC Memory Free:", gc.mem_free(), "GC Collected:", gc.collect());
             print ("Model: {:18}   HoldOver: {:11}   Service: {}".format( symModelArray["MODELTEXT"], holdState,symModelArray["SRVC"]) );
             print ("S/N: {:20}   Crystal: {:12}   In Voltage: {}".format( symModelArray["S/N"], symModelArray["CRYSTAL"], symStatusArray["DHTRVOLT"]) );
             print ("Rb Lock: {:16}   Current Temp: {:7.4}   Lamp Voltage: {:}".format( rblock, symStatusArray["DCURTEMP"], symStatusArray["DMP17"]) ) ;
@@ -1029,7 +1089,6 @@ def main():
 
     # Flush before quitting.
     get_serial_data(RUBIDIUM, 0);
-    bufferStr.split("\r\n");
 
 
 # Start it up!
