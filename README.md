@@ -1,4 +1,4 @@
-#    Symmetricom GPS Disciplining Code in Micro Python
+#    Symmetricom GPS Disciplining Code in Python3 and MicroPython
 
 ## Description
 
@@ -14,9 +14,13 @@ I’ve tested this against a Datum StarLoc2, using a surveyed completed uBlox LE
 
 All the GPS modules were set to use all constellations they were capable of receiving. My favourite is the Trimble, with the LEA-8T coming in a close second place, and the TAU1202 in third and the ATGM336H last, but for what they are, all are good options.
 
-This was tested with a Symmetricom X99, SA.22c, a BPI-PicoW-S3, Raspberry Pi Pico, and ESP32-C3 OLED.
+This was tested with a Symmetricom X99, SA.22c, MicroPython and Python3.
+
+MicroPython Platform: BPI-PicoW-S3, Raspberry Pi Pico, and ESP32-C3 OLED.  
+Python3: LuckFox Pico Mini B, and Raspberry Pi Zero.
+
 ### Holdover Behaviour
-I have not tested the holdover portion of the code but that has not been the focus and it only has been added in recently.
+Testing for the lost of the Rubidium Lock was tested, and a full re-discipline is done whenthe lock is regained.  If there is a lost in the PPS, it continues to run, presuming teh word will re-adjust itself.
 
 ## Setup
 ### GPS 
@@ -44,7 +48,7 @@ q - Set Control Register
 
 ### Special Notes
 
-There are additional commands maybe used with caution and have not been implemented as part of this python code but can be useful under specific scenarios.
+There are additional commands that maybe used with caution and have not been implemented as part of this python code but can be useful under specific scenarios.
 
 #### Saving configurations to your Symmetricom
 
