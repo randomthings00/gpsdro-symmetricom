@@ -19,6 +19,7 @@
 ##    Github: https://github.com/randomthings00/gpsdro-symmetricom
 ##    EEVBlog Forum: https://www.eevblog.com/forum/metrology/symmetricom-x99-rubidium-oscillator/
 ##
+import machine
 import time
 import struct
 import gc
@@ -118,8 +119,8 @@ DDS_CHECK_INTERVAL	= 10
 # Weighted against 6 sawtooth pattern
 # Still testing this -- allows for better tracking
 # and keeps it to about +/- 5ns..
-DDS_DRIFT_LIMIT	    = 0.75
-DDS_DRIFT_WINDOW    = 60
+DDS_DRIFT_LIMIT	    = 1.5
+DDS_DRIFT_WINDOW    = 90
 
 #
 # Global Variables
@@ -143,6 +144,7 @@ symHoldoverArray        = [ [int(0),float(0),float(0),int(0),int(0),int(0),int(0
 
 bufferStr				= "";
 bufferArray				= {};
+symSumsStateSlot		= 0;
 
 #
 # Trackers
@@ -845,7 +847,7 @@ def dds_check_and_adjust():
         ppsval = return_sum_array( symPPS, symPos, DDS_DRIFT_WINDOW, PPS_AVG_TRK );
                    
         if ( abs(ppsval)/DDS_DRIFT_WINDOW >= DDS_DRIFT_LIMIT):
-            multval = round( ppsval/DDS_DRIFT_WINDOW/DDS_DRIFT_LIMIT, 0 );
+#            multval = round( ppsval/DDS_DRIFT_WINDOW/DDS_DRIFT_LIMIT, 0 );
  
 # This code was removed if there is PPS spike it throws it off
 # too much there's probably a better way to do this!
@@ -856,7 +858,11 @@ def dds_check_and_adjust():
 #            elif (abs(ppsval) > 100):
 #                multval = 10;
 #
-            
+            if (ppsval < 0):
+                multval = -1;
+            else:
+                multval = 1;
+                
             ddsAdjValueOld = ddsAdjValue;
             ddsAdjValue = round (ddsAdjValue + ( multval * DDS_INCR_VALUE), 1);
         
@@ -875,7 +881,7 @@ def dds_check_and_adjust():
 #
 def main():
     global symPPS, symPPScounter, symPos
-    global symStatusArray, symSumsArray
+    global symStatusArray, symSumsArray, symSumsStateSlot
 
     # Enable Garbage Collection    
     gc.enable();
@@ -1019,33 +1025,12 @@ def main():
                 ddsTracker = add_offset_to_current((DDS_DRIFT_WINDOW*2)*POLL_PPS);
 
                 # We will consider any adjustment that exceeds 
-                # DISCIPLINE_ENTRIES period as the last disciplined value. 
-                if  ( (symSumsArray[STATE_CALCSLOPE][STATE_POS_COUNTER]) >= (DISCIPLINE_ENTRIES) ):
-                    if  ( (symSumsArray[STATE_CALCSLOPE][STATE_POS_COUNTER]) >= (2*DISCIPLINE_ENTRIES) ):
-                        shift_pps_cal_entry(STATE_CALCSLOPE,STATE_UL_DISCIPLINE);
-                        symSumsArray[STATE_UL_DISCIPLINE][STATE_POS_DDS] = ddsAdjValue;
-                        symSumsArray[STATE_UL_DISCIPLINE][STATE_POS_OLD_DDS] = ddsAdjValueOld;
-                        symSumsArray[STATE_UL_DISCIPLINE][STATE_POS_TIMESTAMP] = symPPScounter;
-                    else:
-                        shift_pps_cal_entry(STATE_CALCSLOPE,STATE_DISCIPLINE);
-                        symSumsArray[STATE_DISCIPLINE][STATE_POS_DDS] = ddsAdjValue;
-                        symSumsArray[STATE_DISCIPLINE][STATE_POS_OLD_DDS] = ddsAdjValueOld;
-                        symSumsArray[STATE_DISCIPLINE][STATE_POS_TIMESTAMP] = symPPScounter;
-
-                # We will condier any adjustment that is shoter than 
-                # DISCIPLINE_ENTRIES period as the last holdover value. 
-                if  ( (symSumsArray[STATE_CALCSLOPE][STATE_POS_COUNTER]) < (DISCIPLINE_ENTRIES) ):
-                    if  ( (symSumsArray[STATE_CALCSLOPE][STATE_POS_COUNTER]) < (DISCIPLINE_ENTRIES/2)):
-                        shift_pps_cal_entry(STATE_CALCSLOPE, STATE_US_DISCIPLINE);
-                        symSumsArray[STATE_US_DISCIPLINE][STATE_POS_DDS] = ddsAdjValue;
-                        symSumsArray[STATE_US_DISCIPLINE][STATE_POS_OLD_DDS] = ddsAdjValueOld;
-                        symSumsArray[STATE_US_DISCIPLINE][STATE_POS_TIMESTAMP] = symPPScounter;
-
-                    else:
-                        shift_pps_cal_entry(STATE_CALCSLOPE, STATE_S_DISCIPLINE);
-                        symSumsArray[STATE_S_DISCIPLINE][STATE_POS_DDS] = ddsAdjValue;
-                        symSumsArray[STATE_S_DISCIPLINE][STATE_POS_OLD_DDS] = ddsAdjValueOld;
-                        symSumsArray[STATE_S_DISCIPLINE][STATE_POS_TIMESTAMP] = symPPScounter;
+                # DISCIPLINE_ENTRIES period as the last disciplined value.
+                shift_pps_cal_entry(STATE_CALCSLOPE,STATE_US_DISCIPLINE+symSumsStateSlot);
+                symSumsArray[STATE_US_DISCIPLINE+symSumsStateSlot][STATE_POS_DDS] = ddsAdjValue;
+                symSumsArray[STATE_US_DISCIPLINE+symSumsStateSlot][STATE_POS_OLD_DDS] = ddsAdjValueOld;
+                symSumsArray[STATE_US_DISCIPLINE+symSumsStateSlot][STATE_POS_TIMESTAMP] = symPPScounter;
+                symSumsStateSlot = (symSumsStateSlot + 1) % 4;
 
                 reset_pps_cal_entry(STATE_CALCSLOPE);
             else:
@@ -1072,7 +1057,7 @@ def main():
 # Rb Lock: Good              Current Temp:   54.25   Lamp Voltage: 13.52071
 # PPS Delta: 5999999 ( -1)   Adjusted:     4 ( -5)   Counter: 383624
 # R Slope: R(  5.3234e-12)   P.Hours:       123456   P.Ticks: 12345678
-# C Slope: R( -2.2213e-11)   DDS Adjust:     -10.2   Averages: 1.0e-11
+# C Slope: R( -2.2213e-11)   Averages:     1.0e-11   DDS Adjust: -10.2 (-32.5)
 
             if ( SYSTEM_DATA.sysname.find("Linux") < 0 ):
                 print("-- GC Memory Alloc:", gc.mem_alloc(), "GC Memory Free:", gc.mem_free(), "GC Collected:", gc.collect());
@@ -1081,8 +1066,8 @@ def main():
             print ("Rb Lock: {:16}   Current Temp: {:7.4}   Lamp Voltage: {:}".format( rblock, symStatusArray["DCURTEMP"], symStatusArray["DMP17"]) ) ;
             print ("PPS Delta: {:8} ({:3})   Adjusted: {:5} ({:3})   Counter: {}".format(symStatusArray["1PPSDELTA"], pps_rollover_correction(symStatusArray["1PPSDELTA"]), pps_rollover_correction(symStatusArray["1PPSDELTA"]) - symStatusArray["PPSOFFSET"], symStatusArray["PPSOFFSET"], symPPScounter));
             print ("R Slope: {:16}   P.Hours: {:12}   P.Ticks: {:}".format(slopeR, symStatusArray["PWRHRS"], symStatusArray["PWRTICKS"]) );
-            print ("C Slope: {:16}   DDS Adjust: {:9}   Averages: {:}".format(slopeC, ddsAdjValue, dSums/DDS_DRIFT_WINDOW) );
-            print("Sum Array: ", symSumsArray);
+            print ("C Slope: {:16}   Averages:  {:10}   DDS Adjust: {:} ({:})".format(slopeC, dSums/DDS_DRIFT_WINDOW, ddsAdjValue, symSumsArray[STATE_INITIAL][STATE_POS_DDS]) );
+            print ("Sum Array: ", symSumsArray);
         else:
           time.sleep(0.01);  
         
