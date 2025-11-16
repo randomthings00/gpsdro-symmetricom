@@ -267,13 +267,23 @@ def get_current_tick():
 
 
 #
-#  This handles the difference addition
+#  This handles the difference addition to current clock
 #
 def add_offset_to_current( offsetTick ):
     if ( SYSTEM_DATA.sysname.find("Linux") >= 0 ):
         return time.monotonic_ns() + offsetTick;
     else:
         return time.ticks_add(time.ticks_ms(), int(offsetTick));
+
+
+#
+#  This handles the difference addition to value input
+#
+def add_offset_to_value( inValue, offsetTick ):
+    if ( SYSTEM_DATA.sysname.find("Linux") >= 0 ):
+        return inValue + offsetTick;
+    else:
+        return time.ticks_add(inValue, int(offsetTick));
 
 
 #
@@ -738,7 +748,7 @@ def calculate_slope( whichArray, inDdsValue, disciplineDuration ):
                 print ("    PPS Spike / Loss detected, exiting..");
                 loopTracker = 0;
             else:
-                startTracker = add_offset_to_current(POLL_PPS);
+                startTracker = add_offset_to_value(startTracker, POLL_PPS);
                 valueTracker += pps_rollover_correction(symStatusArray["1PPSDELTA"]);
                 valueCounter = valueCounter + 1;
             printedStatus = 0;
@@ -1078,3 +1088,4 @@ def main():
 
 # Start it up!
 main();
+
