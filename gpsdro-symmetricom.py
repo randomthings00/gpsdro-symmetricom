@@ -19,24 +19,72 @@
 ##    Github: https://github.com/randomthings00/gpsdro-symmetricom
 ##    EEVBlog Forum: https://www.eevblog.com/forum/metrology/symmetricom-x99-rubidium-oscillator/
 ##
-import machine
+## Notes:
+## Change the variables to match your use in platform_setup:
+##     TX_PIN, RX_PIN, UART_PORT, COM_PORT
+## Change to skip the taming / discipling at the start set the ddsAdjValue to
+##     the best teh long term dds value that is not 0.0
+
+
 import time
 import struct
 import gc
 import os
+from sys import platform
 
+try:
+    import machine
+except ImportError:
+    machine = None
+
+try:
+    import serial
+except ImportError:
+    serial = None
+
+try:
+    time.ticks_ms();
+    TICKS = True
+except:
+    # Presume time.monotonic_ns
+    TICKS = False
+
+try:
+    gc.mem_alloc();
+    GC_MEM = True
+except:
+    # Presume slots are used
+    GC_MEM = False
+
+try:
+    from periphery import GPIO
+    PERIPHERY = True
+except:
+    GPIO = False
+    PERIPHERY = False
+
+try:
+    from gpiozero import LED
+    GPIOZERO = True
+except:
+    LED = False
+    GPIOZERO = False
+        
 #
 # System Specific Data
 #
-SYSTEM_DATA         = os.uname()
-STORAGE_DATA        = os.statvfs("/")
+try:
+    STORAGE_DATA        = os.statvfs("/")
+except:
+    STORAGE_DATA		= False
 OVERCLOCK_SYS       = 0
 STATUS_LED			= 0
 
-if ( SYSTEM_DATA.sysname.find("Linux") >= 0 ):
-    import serial
-else:
-    import machine
+TX_PIN = 6
+RX_PIN = 5
+UART_PORT = 1
+COM_PORT = "/dev/ttyS4"
+
 
 #
 # Constants
@@ -176,19 +224,29 @@ ddsAdjValueOld 			= float(0.0);
 #
 def platform_setup():
     global rubidium, STATUS_LED, POLL_PPS
+    global TX_PIN, RX_PIN, UART_PORT, COM_PORT
     
-    osData = os.uname();
-    storageSize = STORAGE_DATA[1] * STORAGE_DATA[2];
-    storageFree = STORAGE_DATA[0] * STORAGE_DATA[3];
-    storageUsed = storageSize - storageFree;
-    KB = 1024
-    MB = 1024 * 1024
+    osData = platform;
 
     print (osData);
-    print("Size : {:,} bytes, {:,} KB, {} MB".format(storageSize, storageSize / KB, storageSize / MB))
-    print("Used : {:,} bytes, {:,} KB, {} MB".format(storageUsed, storageUsed / KB, storageUsed / MB))
-    print("Free : {:,} bytes, {:,} KB, {} MB".format(storageFree, storageFree / KB, storageFree / MB))
-    
+    if (STORAGE_DATA):
+        storageSize = STORAGE_DATA[1] * STORAGE_DATA[2];
+        storageFree = STORAGE_DATA[0] * STORAGE_DATA[3];
+        storageUsed = storageSize - storageFree;
+        KB = 1024
+        MB = 1024 * 1024
+
+        print("Size : {:,} bytes, {:,} KB, {} MB".format(storageSize, storageSize / KB, storageSize / MB))
+        print("Used : {:,} bytes, {:,} KB, {} MB".format(storageUsed, storageUsed / KB, storageUsed / MB))
+        print("Free : {:,} bytes, {:,} KB, {} MB".format(storageFree, storageFree / KB, storageFree / MB))
+    else:
+        print("No Storage Data info..");
+        
+    if (TICKS):
+        POLL_PPS = 1000
+    else:
+        POLL_PPS = 1000000000
+        
     # Set up the UART, it's declared global once thsi is setup it's usable 
     # by all.
     #
@@ -201,38 +259,58 @@ def platform_setup():
     # ESP32-S3: UART 1, TX=18, RX=16
     # ESP32-C3: UART 1, TX=6, RX=5
     #
-    if (SYSTEM_DATA .nodename == "rp2" ):
-        print ("Speed:", machine.freq());
-        if (OVERCLOCK_SYS):
-            print ("Overclocking to", 150000000);
-            machine.freq(150000000);
-        print ("Setting up UART for Raspberry Pi Pico..");
-        rubidium = machine.UART(0, tx=machine.Pin(0), rx=machine.Pin(1), rxbuf=1024, timeout=200, timeout_char=10);
-        STATUS_LED = machine.Pin(25, machine.Pin.OUT);
-    elif ( SYSTEM_DATA.machine.find("ESP32S3") > 0 ):
-        print ("Speed:", machine.freq());
-        if (OVERCLOCK_SYS):
-            print ("Overclocking to", 240000000);
-            machine.freq(240000000);
-        print ("Setting up UART for ESP32-S3..");
-        rubidium = machine.UART(1, tx=machine.Pin(18), rx=machine.Pin(16), rxbuf=1024, timeout=200, timeout_char=10);
-        STATUS_LED = machine.Pin(46, machine.Pin.OUT);
-    elif ( SYSTEM_DATA.machine.find("ESP32C3") >= 0 ):
-        print ("Speed:", machine.freq());
-        if (OVERCLOCK_SYS):
-            print ("Overclocking to", 160000000);
-            machine.freq(160000000);
-        print ("Setting up UART for ESP32-C3..");
-        rubidium = machine.UART(1, tx=machine.Pin(0), rx=machine.Pin(1), rxbuf=1024, timeout=200, timeout_char=10);
-        STATUS_LED = machine.Pin(8, machine.Pin.OUT);
-    elif ( SYSTEM_DATA.sysname.find("Linux") >= 0 ):
-        print ("Setting up UART for Linux..");
-        rubidium = serial.Serial("/dev/ttyS4", timeout=0.2, inter_byte_timeout=0.001);        
-        POLL_PPS = 1000000000
+    # Raspberry Pi Zero W: /dev/ttyAMA0
+    # Luckfox Pico Mini : /dev/ttyS4
+    # Windows: COM10
+    #
+    if (machine):
+        SYSTEM_DATA = os.uname();
+        if (SYSTEM_DATA.nodename == "rp2" ):
+            print ("Setting up UART for Raspberry Pi Pico..");
+            TX_PIN = 0;
+            RX_PIN = 1;
+            UART_PORT = 0;
+            OC_SPEED = 150000000;
+            STATUS_LED = machine.Pin(25, machine.Pin.OUT);
+        elif ( SYSTEM_DATA.machine.find("ESP32S3") > 0 ):
+            print ("Setting up UART for ESP32-S3..");
+            TX_PIN = 18;
+            RX_PIN = 16;
+            UART_PORT = 1;
+            OC_SPEED = 240000000;
+            STATUS_LED = machine.Pin(46, machine.Pin.OUT);
+        elif ( SYSTEM_DATA.machine.find("ESP32C3") >= 0 ):
+            print ("Setting up UART for ESP32-C3..");
+            TX_PIN = 0;
+            RX_PIN = 1;
+            UART_PORT = 1;
+            OC_SPEED = 160000000;
+            STATUS_LED = machine.Pin(8, machine.Pin.OUT);
+        else:
+            print ("Setting up UART for Micropython..");
+
+        rubidium = machine.UART(UART_PORT, tx=machine.Pin(TX_PIN), rx=machine.Pin(RX_PIN), rxbuf=1024, timeout=200, timeout_char=10);
+
     else:
-        print ("********** Platform not found aborting ************")
-        exit(1);
-    
+        if (osData.find("linux") >= 0):
+            print ("Setting up UART for Linux..");
+            COM_PORT = "/dev/ttyS4";
+            if (GPIO):
+                STATUS_LED = GPIO(34, "out");
+            if (LED):
+                STATUS_LED = LED(26);
+        else:	    
+            print ("Setting up UART for Windows..");
+            COM_PORT = "COM21";
+
+        rubidium = serial.Serial(COM_PORT, timeout=0.2, inter_byte_timeout=0.001, baudrate=9600, bytesize=8, parity=serial.PARITY_NONE, stopbits=1);
+
+    if (machine):
+        print ("Speed:", machine.freq());
+        if (OVERCLOCK_SYS):
+            print ("Overclocking to", OC_SPEED);
+            machine.freq(OC_SPEED);
+		    
 
 #
 # This pads the hex string to match input type and strips the "."
@@ -260,40 +338,40 @@ def buffer_hex_float_output(hexString):
 #  This handles the abstraction of micropython time and regualr python time
 #
 def get_current_tick():
-    if ( SYSTEM_DATA.sysname.find("Linux") >= 0 ):
-        return time.monotonic_ns();
-    else:
+    if (TICKS):
         return time.ticks_ms();
+    else:
+        return time.monotonic_ns();
 
 
 #
 #  This handles the difference addition to current clock
 #
 def add_offset_to_current( offsetTick ):
-    if ( SYSTEM_DATA.sysname.find("Linux") >= 0 ):
-        return time.monotonic_ns() + offsetTick;
-    else:
+    if (TICKS):
         return time.ticks_add(time.ticks_ms(), int(offsetTick));
+    else:
+        return time.monotonic_ns() + offsetTick;
 
 
 #
 #  This handles the difference addition to value input
 #
 def add_offset_to_value( inValue, offsetTick ):
-    if ( SYSTEM_DATA.sysname.find("Linux") >= 0 ):
-        return inValue + offsetTick;
-    else:
+    if (TICKS):
         return time.ticks_add(inValue, int(offsetTick));
+    else:
+        return inValue + offsetTick;
 
 
 #
 #  This returns the difference
 #
 def diff_offset_to_current( offsetTick ):
-    if ( SYSTEM_DATA.sysname.find("Linux") >= 0 ):
-        return time.monotonic_ns() - offsetTick;
-    else:
+    if (TICKS):
         return time.ticks_diff (time.ticks_ms(), int(offsetTick));
+    else:
+        return time.monotonic_ns() - offsetTick;
 
 
 #
@@ -333,16 +411,16 @@ def get_serial_data( type, bufParam ):
               
     bufferStr = "";
 
-    if ( SYSTEM_DATA.sysname.find("Linux") >= 0 ):
-        bufferStr  = rubidium.readlines();
-        bufferArray = [line.decode('utf-8').strip().upper() for line in bufferStr]
-    else:
+    if ( machine ):
         data = rubidium.read();
         try:
             bufferStr += data.decode('ascii').upper();
         except:
             bufferStr = "";
         bufferArray = bufferStr.split("\r\n");
+    else:
+        bufferStr  = rubidium.readlines();
+        bufferArray = [line.decode('utf-8').strip().upper() for line in bufferStr]
           
 
 #
@@ -352,10 +430,10 @@ def get_serial_data( type, bufParam ):
 def send_serial_data( type, bufParam ):
     global bufferStr
     
-    if ( SYSTEM_DATA.sysname.find("Linux") >= 0 ):
-        rubidium.write(bufParam.encode())
-    else:
+    if ( machine ):
         rubidium.write(bufParam);
+    else:
+        rubidium.write(bufParam.encode())
 
 
 #
@@ -363,24 +441,27 @@ def send_serial_data( type, bufParam ):
 #
 def get_symmetricom_model():
     global symModelArray, bufferStr, bufferArray, rubidium
+    
 
     # This block is used to test for the 2 known
     # baud rates
-    if ( SYSTEM_DATA.sysname.find("Linux") >= 0 ):
-        rubidium = serial.Serial("/dev/ttyS4", timeout=0.2, inter_byte_timeout=0.001, baudrate=9600, bytesize=8, parity=serial.PARITY_NONE, stopbits=1);
-    else:
+    if ( machine ):
         rubidium.init(baudrate=9600, bits=8, parity=None, stop=1);
+    else:
+        rubidium.close();
+        rubidium = serial.Serial(COM_PORT, timeout=0.2, inter_byte_timeout=0.001, baudrate=9600, bytesize=8, parity=serial.PARITY_NONE, stopbits=1);
     send_serial_data(RUBIDIUM, "i");
     get_serial_data(RUBIDIUM, 0);
     
     # Sometimes the try and catch just doesn't work
     # and it needs to be done again..  Happens.. 
     if ( len(bufferStr) < 4 ):
-        if ( SYSTEM_DATA.sysname.find("Linux") >= 0 ):
-            rubidium = serial.Serial("/dev/ttyS4", timeout=0.2, inter_byte_timeout=0.001, baudrate=57600, bytesize=8, parity=serial.PARITY_NONE, stopbits=1);
-        else:
+        if ( machine ):
             rubidium.init(baudrate=57600, bits=8, parity=None, stop=1);
             rubidium.flush();
+        else:
+            rubidium.close();
+            rubidium = serial.Serial(COM_PORT, timeout=0.2, inter_byte_timeout=0.001, baudrate=57600, bytesize=8, parity=serial.PARITY_NONE, stopbits=1);
         send_serial_data(RUBIDIUM, "i");
         get_serial_data(RUBIDIUM, 0);
 
@@ -569,6 +650,27 @@ def set_control_reg_message( value ):
 
 
 #
+# Used to toggle the LED to indicate program is running
+#
+def toggle_status_led( ):
+    global STATUS_LED
+    
+    if not (STATUS_LED):
+        return;
+    
+    if ( machine or LED):
+        STATUS_LED.toggle();
+        return;
+    
+    if ( GPIO ):
+        if (STATUS_LED.read()):
+            STATUS_LED.write(False);
+        else:
+            STATUS_LED.write(True);
+        return;
+
+
+#
 # Use to help calcualte a slope value for disciplining
 #
 # Credits: This was taken from Lady Heather from Mark Sims.
@@ -713,8 +815,7 @@ def calculate_slope( whichArray, inDdsValue, disciplineDuration ):
         print (".", end="");
         get_pps_delta();
         time.sleep(1);
-        if ( SYSTEM_DATA.sysname.find("Linux") < 0 ):  
-            STATUS_LED.toggle();
+        toggle_status_led();
         retryTracker += 1;
         if (retryTracker > 10):
             set_tic_message( symStatusArray["1PPSDELTA"] );
@@ -734,11 +835,11 @@ def calculate_slope( whichArray, inDdsValue, disciplineDuration ):
 
     while ( (loopTracker) and (valueCounter < disciplineDuration) ):
 
+        toggle_status_led();
         if ( diff_offset_to_current(startTracker) >= 0):
             get_pps_delta();
             get_control_reg_message();
-            if ( SYSTEM_DATA.sysname.find("Linux") < 0 ):  
-                STATUS_LED.toggle();
+            toggle_status_led();
             pps_cal_list(whichArray, pps_rollover_correction(symStatusArray["1PPSDELTA"]), valueCounter);
             
             if ( symStatusArray["IFPGACTL"] & 0x0002 ):
@@ -806,8 +907,7 @@ def calculate_slope( whichArray, inDdsValue, disciplineDuration ):
             print (".", end="");
             get_pps_delta();
             time.sleep(1);
-            if ( SYSTEM_DATA.sysname.find("Linux") < 0 ):  
-                STATUS_LED.toggle();
+            toggle_status_led();
             retryTracker += 1;
             if (retryTracker > 10):
                 set_tic_message( symStatusArray["1PPSDELTA"] );
@@ -887,7 +987,7 @@ def dds_check_and_adjust():
         return 0;
 
 #
-# Maiu function -- it all runs here!
+# Main function -- it all runs here!
 #
 def main():
     global symPPS, symPPScounter, symPos
@@ -915,8 +1015,7 @@ def main():
             print (".",end=""); 
             get_control_reg_message();
             time.sleep(2);
-            if ( SYSTEM_DATA.sysname.find("Linux") < 0 ):  
-                STATUS_LED.toggle();
+            toggle_status_led();
         print ("");
     else:
         print ("Rubidium lock is good.");
@@ -928,9 +1027,12 @@ def main():
     get_pps_delta();
     
     # Initial disciplining
-    while ( calculate_slope(STATE_INITIAL, ddsAdjValue, DISCIPLINE_ENTRIES) ):
-#    while ( calculate_slope(STATE_INITIAL, ddsAdjValue, 0) ):
-        print ("Failed Slope calculation, restarting..");
+    if (ddsAdjValue == 0.0):
+        while ( calculate_slope(STATE_INITIAL, ddsAdjValue, DISCIPLINE_ENTRIES) ):
+            print ("Failed Slope calculation, restarting..");
+    else:
+        while ( calculate_slope(STATE_INITIAL, ddsAdjValue, 0) ):
+            print ("Failed Slope calculation, restarting..");
         
 
     get_status_message();
@@ -956,8 +1058,7 @@ def main():
         if ( diff_offset_to_current( ppsTracker) > 0):
             ppsTracker = add_offset_to_current(POLL_PPS);
             get_pps_delta();
-            if ( SYSTEM_DATA.sysname.find("Linux") < 0 ):  
-                STATUS_LED.toggle();
+            toggle_status_led();
 
 #
 # This is the rough holdover code I put in for now, there's more than can be
@@ -1069,8 +1170,11 @@ def main():
 # R Slope: R(  5.3234e-12)   P.Hours:       123456   P.Ticks: 12345678
 # C Slope: R( -2.2213e-11)   Averages:     1.0e-11   DDS Adjust: -10.2 (-32.5)
 
-            if ( SYSTEM_DATA.sysname.find("Linux") < 0 ):
+            if ( GC_MEM ):
                 print("-- GC Memory Alloc:", gc.mem_alloc(), "GC Memory Free:", gc.mem_free(), "GC Collected:", gc.collect());
+            else:
+                print("-- GC Count:", gc.get_count(), "GC Threshold:", gc.get_threshold(), "GC Collected:", gc.collect());
+	    
             print ("Model: {:18}   HoldOver: {:11}   Service: {}".format( symModelArray["MODELTEXT"], holdState,symModelArray["SRVC"]) );
             print ("S/N: {:20}   Crystal: {:12}   In Voltage: {}".format( symModelArray["S/N"], symModelArray["CRYSTAL"], symStatusArray["DHTRVOLT"]) );
             print ("Rb Lock: {:16}   Current Temp: {:7.4}   Lamp Voltage: {:}".format( rblock, symStatusArray["DCURTEMP"], symStatusArray["DMP17"]) ) ;
@@ -1088,4 +1192,3 @@ def main():
 
 # Start it up!
 main();
-
