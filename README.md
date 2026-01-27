@@ -6,7 +6,7 @@
 
 The 1PPS signal itself can come from any number of sources including a GPS module, a disciplined source driving a PICDIV, or a signal generator.  The more stable the source is the more reliable the discipline is.
 
-### Cavets
+### Caveats
 There is natural variability to the PPS signal source from the GPS module, however, using a part of the taming code from Lady Heather it is able to discipline the Symmetricom and keep it in-sync with the GPS module without a phase lock.  Some of the inaccuracies also come from the internal Pico clock, the processing code and the time slices.
 
 ## Testing
@@ -20,16 +20,44 @@ MicroPython Platform: BPI-PicoW-S3, Raspberry Pi Pico, and ESP32-C3 OLED.
 Python3: LuckFox Pico Mini B, and Raspberry Pi Zero.
 
 ### Holdover Behaviour
-Testing for the lost of the Rubidium Lock was tested, and a full re-discipline is done whenthe lock is regained.  If there is a lost in the PPS, it continues to run, presuming teh word will re-adjust itself.
+Testing for the loss of the Rubidium Lock was tested, and a full re-discipline is done when the lock is regained.  If there is a lost in the PPS, it continues to run, presuming the word will re-adjust itself.
 
 ## Setup
 ### GPS 
 The GPS module must be powered, but no data needs to be sent to the Pico/ESP32-S3/ESP32-C3.  The PPS signal should be wired up to the PPS input and the coaxial cable should be properly grounded, this reduced random signal spikes.
 
 ### Symmetricom
-I did not cover the breakout for the Symmetricom but there are various breakout boards and schematics out there.  I made my own at the start but ended up using the boards for the SA.22c and X72 designed and created by BG7TBL and sold by various vendors on Ebay.
+I did not cover the breakout for the Symmetricom but there are various breakout boards and schematics out there.  I made my own at the start but ended up using the boards for the SA.22c and X72 designed and created by BG7TBL and sold by various vendors on eBay.
 
 If you use the BG7TBL board ensure you also get a MAX3232 convert board to covert from the RS232 signal to the TTL, otherwise you can damage your Pico / ESP32.  You can modify the board to do a straight TTL pass-thru as well if you are inclined to do that.
+
+### Platform Specific Setup
+The code has been modified to be more friend to different platforms capable of running Python3.  
+
+Below are some specific notes.
+
+#### MicroPython
+-	Install MicroPython for your board, you can find the supported ones at the link (https://micropython.org/download/)
+-	In platform_setup:
+-	Assign the UART and TX and RX pin
+-	Configure STATUS_LED for your board or the on-board dedicated user led.
+
+#### Linux
+-	Ensure Python3 is installed
+-	Ensure pyserial is installed
+-	Configure your com port in platform_setup
+
+##### Raspberry Pi (1,2,3,4,5)
+-	On Raspberry Pi (Proper) if you want LED flashing for status (this may already be installed on newer RaspberryOS):  pip install gpiozero
+-	Select the LED pin and set it in platform_setup.
+-	Although any Serial port can be used via the USB, the code was only tested with /dev/ttyAMA0
+
+#### Windows
+-	Install Python 3 from the Microsoft Store
+-	Install pyserial with the follow command from PowerShell: pip install pyserial
+-	You can load the script up using IDLE and Run Module.
+-	Configure your com port in platform_setup
+
 
 ## Symmetricom Commands
 
