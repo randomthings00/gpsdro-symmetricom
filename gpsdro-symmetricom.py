@@ -520,7 +520,10 @@ def get_symmetricom_model():
                         try:
                             tempVal = int(element[1]);
                         except:
-                            tempVal = float(element[1]);                    
+                            try:
+                                tempVal = float(element[1]);
+                            except:
+                                tempVal = 0;
 
                     symModelArray[(element[0])] = tempVal;
 
@@ -589,7 +592,10 @@ def get_status_message():
                 try:
                     tempVal = int(element[1]);
                 except:
-                    tempVal = float(element[1]);                    
+                    try:
+                        tempVal = float(element[1]);
+                    except:
+                        tempVal = 0                
 
             symStatusArray[element[0].strip()] = tempVal;
 
@@ -1192,3 +1198,4 @@ def main():
 
 # Start it up!
 main();
+
